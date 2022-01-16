@@ -46,7 +46,7 @@ function adaptive_probs(values, prob_α, prob_p)
 
     # Mixture weighting
     prob = ((1 .- prob_α) .* tail_prob) .+ (prob_α .* prob_p)
-    @show prob, tail_prob, prob_α
+    # @show prob, tail_prob, prob_α
     return prob
 end
 
@@ -59,7 +59,7 @@ function compute_IS_weight(q_logprob, a, distribution)
     else
         w = logpdf(distribution, a) - q_logprob
     end
-    @show a, q_logprob, w
+    # @show a, q_logprob, w
     return w
 end
 
@@ -196,6 +196,7 @@ function simulate(dpw::ISDPWPlanner, snode::Int, w::Float64, d::Int)
     end
     # print("Softmax weights: ", softmax(all_UCB))
     estimated_quantile = ImportanceWeightedRiskMetrics.quantile(tree.cdf_est, sol.α)
+    # @show tree.cdf_est, tree.conditional_cdf_est
     sanode, q_logprob = select_action(tree.children[snode], all_UCB, [ImportanceWeightedRiskMetrics.cdf(tree.conditional_cdf_est[child], estimated_quantile) for child in tree.children[snode]], [pdf(actions(dpw.mdp, s), tree.a_labels[child]) for child in tree.children[snode]])
     a = tree.a_labels[sanode] # choose action randomly based on approximate value
     w_node = compute_IS_weight(q_logprob, a, actions(dpw.mdp, s))
@@ -236,7 +237,7 @@ function simulate(dpw::ISDPWPlanner, snode::Int, w::Float64, d::Int)
 
     tree.q[sanode] += (q - tree.q[sanode])/tree.n[sanode]
 
-    ImportanceWeightedRiskMetrics.update!(tree.conditional_cdf_est[sanode], q, w)
+    ImportanceWeightedRiskMetrics.update!(tree.conditional_cdf_est[sanode], q, exp(w))
 
     return q
 end
