@@ -8,6 +8,7 @@ end
 
 # initial state constructor
 TreeState(mdp_state::Any) = TreeState([], [0.0], mdp_state, false, 0.0)
+TreeState(state::TreeState) = TreeState(state.values, state.costs, state.mdp_state, state.done, 0.0)
 
 # The simple mdp type
 mutable struct TreeMDP <: MDP{TreeState, Any}
@@ -67,14 +68,14 @@ end
 
 function rollout(mdp::TreeMDP, s::TreeState, w::Float64, d::Int64)
     if d == 0 || isterminal(mdp, s)
-        return 0.0
+        return 0.0, w
     else
         p_action = POMDPs.actions(mdp, s)
         a = rand(p_action)
 
         (sp, r) = @gen(:sp, :r)(mdp, s, [a, w], Random.GLOBAL_RNG)
-        q_value = r + discount(mdp)*rollout(mdp, sp, w, d-1)
+        q_value = r + discount(mdp)*first(rollout(mdp, sp, w, d-1))
 
-        return q_value
+        return q_value, w
     end
 end

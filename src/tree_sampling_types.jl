@@ -154,7 +154,7 @@ mutable struct ISDPWTree{S,A}
         sz = min(sz, 100_000)
         dpw_tree = MCTS.DPWTree{S,A}(sz)
         return new(dpw_tree,
-                   RunningCDFEstimator([0.0], [1e-5]),
+                   RunningCDFEstimator([0.0], [1e-7]),
                    sizehint!(RunningCDFEstimator[], sz)
                   )
     end
