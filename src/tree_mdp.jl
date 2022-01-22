@@ -8,7 +8,7 @@ end
 
 # initial state constructor
 TreeState(mdp_state::Any) = TreeState([], [0.0], mdp_state, false, 0.0)
-TreeState(state::TreeState) = TreeState(state.values, state.costs, state.mdp_state, state.done, 0.0)
+TreeState(state::TreeState, w::Float64) = TreeState(state.values, state.costs, state.mdp_state, state.done, w)
 
 # The simple mdp type
 mutable struct TreeMDP <: MDP{TreeState, Any}

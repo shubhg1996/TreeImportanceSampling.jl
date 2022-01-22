@@ -30,20 +30,52 @@ Calculate next action
 """
 function select_action(nodes, values, prob_α, prob_p, n, α, β, γ)
     prob = adaptive_probs(values, prob_α, prob_p, n, α, β, γ)
+    # prob = naive_probs(values)
+    # prob = topk_probs(values, prob_p; k=2)
+    # prob = expec_probs(values, prob_p)
+    # prob = cdf_probs(values, prob_α, prob_p)
+    # prob = cvar_probs(values, prob_α, prob_p)
     sanode_idx = sample(1:length(nodes), Weights(prob))
     sanode = nodes[sanode_idx]
     q_logprob = log(prob[sanode_idx])
     return sanode, q_logprob
 end
 
-function adaptive_probs(values, prob_α, prob_p, n, α, β, γ)
-    if length(values)==1
-        return [1.0]
-    end
+function naive_probs(values)
+    prob = ones(length(values))
+    prob /= sum(prob)
+    return prob
+end
 
-    cvar_strategy = [((1 - prob_α[i])*values[i]*prob_p[i]) for i=1:length(values)] .+ 1e-5
-    cdf_strategy = [((1 - prob_α[i])*prob_p[i]) for i=1:length(values)] .+ 1e-5
-    mean_strategy = [(values[i]*prob_p[i]) for i=1:length(values)] .+ 1e-5
+function expec_probs(values, prob_p)
+    prob = [values[i]*prob_p[i] for i=1:length(values)] .+ max(values...)/10 .+ 1e-7
+    prob /= sum(prob)
+    return prob
+end
+
+function cdf_probs(values, prob_α, prob_p)
+    prob = [((1 - prob_α[i])*prob_p[i]) for i=1:length(values)] .+ (max(prob_α...))*max(prob_p...)/10 .+ 1e-7
+    prob /= sum(prob)
+    return prob
+end
+
+function cvar_probs(values, prob_α, prob_p)
+    prob = [((1 - prob_α[i])*values[i]*prob_p[i]) for i=1:length(values)] .+ (max(prob_α...))*max(values...)/10 .+ 1e-7
+    prob /= sum(prob)
+    return prob
+end
+
+function topk_probs(values, prob_p; k=2)
+    topk_idx = partialsortperm(values, 1:k, rev=true)
+    prob = [(i in topk_idx ? values[i]*prob_p[i] : 0) for i=1:length(values)] .+ max(values...)/10 .+ 1e-7
+    prob /= sum(prob)
+    return prob
+end
+
+function adaptive_probs(values, prob_α, prob_p, n, α, β, γ)
+    cvar_strategy = [(prob_α[i]*values[i]*prob_p[i]) for i=1:length(values)] .+ (max(prob_α...))*max(values...)/20 .+ 1e-7
+    cdf_strategy = [(prob_α[i]*prob_p[i]) for i=1:length(values)] .+ (max(prob_α...))*max(prob_p...)/20 .+ 1e-7
+    mean_strategy = [values[i]*prob_p[i] for i=1:length(values)] .+ max(values...)/20 .+ 1e-7
 
     # Normalize to unity
     cvar_strategy /= sum(cvar_strategy)
@@ -52,6 +84,7 @@ function adaptive_probs(values, prob_α, prob_p, n, α, β, γ)
 
     # Mixture weighting
     prob = β*mean_strategy .+ γ*cdf_strategy .+ (1 - β - γ)*cvar_strategy
+    # @show mean_strategy, cdf_strategy, cvar_strategy
     return prob
 end
 
@@ -149,6 +182,7 @@ function simulate(dpw::ISDPWPlanner, snode::Int, w::Float64, d::Int, β, γ)
     sol = dpw.solver
     tree = dpw.tree
     s = tree.s_labels[snode]
+    s = TreeState(s, w)
     dpw.reset_callback(dpw.mdp, s) # Optional: used to reset/reinitialize MDP to a given state.
 
     for i=tree.cdf_est.last_i+1:length(dpw.mdp.costs)
@@ -186,6 +220,7 @@ function simulate(dpw::ISDPWPlanner, snode::Int, w::Float64, d::Int, β, γ)
     end
 
     all_UCB = []
+    all_q = []
     ltn = log(tree.total_n[snode])
     for child in tree.children[snode]
         n = tree.n[child]
@@ -204,9 +239,21 @@ function simulate(dpw::ISDPWPlanner, snode::Int, w::Float64, d::Int, β, γ)
     # print("Softmax weights: ", softmax(all_UCB))
     w_annealed = 0.5/(1.0+0.2*exp(ltn))
     α = w_annealed + (1-w_annealed)*sol.α
+    # α = sol.α
+
+
     estimated_quantile = ImportanceWeightedRiskMetrics.quantile(tree.cdf_est, α)
+    prob_α = [1. - ImportanceWeightedRiskMetrics.cdf(tree.conditional_cdf_est[child], estimated_quantile) for child in tree.children[snode]]
+    # while sum(prob_α) < α/100
+    #     α = sqrt(α)
+    #     estimated_quantile = ImportanceWeightedRiskMetrics.quantile(tree.cdf_est, α)
+    #     prob_α = [1. - ImportanceWeightedRiskMetrics.cdf(tree.conditional_cdf_est[child], estimated_quantile) for child in tree.children[snode]]
+    # end
+
+    prob_p = [pdf(actions(dpw.mdp, s), tree.a_labels[child]) for child in tree.children[snode]]
+
     # @show tree.cdf_est, tree.conditional_cdf_est
-    sanode, q_logprob = select_action(tree.children[snode], all_UCB, [ImportanceWeightedRiskMetrics.cdf(tree.conditional_cdf_est[child], estimated_quantile) for child in tree.children[snode]], [pdf(actions(dpw.mdp, s), tree.a_labels[child]) for child in tree.children[snode]], tree.cdf_est.last_i, α, β, γ)
+    sanode, q_logprob = select_action(tree.children[snode], all_UCB, prob_α, prob_p, tree.cdf_est.last_i, α, β, γ)
     a = tree.a_labels[sanode] # choose action randomly based on approximate value
     w_node = compute_IS_weight(q_logprob, a, actions(dpw.mdp, s))
     w = w + w_node
@@ -215,6 +262,7 @@ function simulate(dpw::ISDPWPlanner, snode::Int, w::Float64, d::Int, β, γ)
     new_node = false
     sp, r = @gen(:sp, :r)(dpw.mdp, s, [a, w], dpw.rng)
     # sp = TreeState(sp)  # remove weight to check repetition
+    # @show sp.values, sp.costs, sp.mdp_state, sp.done, sp.w
 
     if sol.check_repeat_state && tree.n_a_children[sanode] > 0
         spnode, r_stored = rand(dpw.rng, tree.transitions[sanode])
@@ -234,6 +282,7 @@ function simulate(dpw::ISDPWPlanner, snode::Int, w::Float64, d::Int, β, γ)
 
     if new_node
         q_samp, w_samp = estimate_value(dpw.solved_estimate, dpw.mdp, sp, w, d-1)
+        # @show "Estimated", q_samp, w_samp
         q = r + discount(dpw.mdp)*q_samp
     else
         q_samp, w_samp = simulate(dpw, spnode, w, d-1, β, γ)
@@ -245,7 +294,7 @@ function simulate(dpw::ISDPWPlanner, snode::Int, w::Float64, d::Int, β, γ)
 
     tree.q[sanode] += (q - tree.q[sanode])/tree.n[sanode]
 
-    ImportanceWeightedRiskMetrics.update!(tree.conditional_cdf_est[sanode], q, exp(w_samp - w)) # check how to weight samples effectively
+    ImportanceWeightedRiskMetrics.update!(tree.conditional_cdf_est[sanode], q, exp(w_samp)) # check how to weight samples effectively
 
     return q, w_samp
 end
