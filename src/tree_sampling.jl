@@ -38,7 +38,13 @@ function select_action(nodes, values, prob_α, prob_p, n, α, β, γ)
     sanode_idx = sample(1:length(nodes), Weights(prob))
     sanode = nodes[sanode_idx]
     q_logprob = log(prob[sanode_idx])
+    # @show prob, prob_p
+    @show sanode_idx, prob, prob_p
     return sanode, q_logprob
+end
+
+function nominal_probs(values, prob_p)
+    return prob_p
 end
 
 function naive_probs(values)
@@ -73,18 +79,19 @@ function topk_probs(values, prob_p; k=2)
 end
 
 function adaptive_probs(values, prob_α, prob_p, n, α, β, γ)
-    cvar_strategy = [(prob_α[i]*values[i]*prob_p[i]) for i=1:length(values)] .+ (max(prob_α...))*max(values...)/20 .+ 1e-7
-    cdf_strategy = [(prob_α[i]*prob_p[i]) for i=1:length(values)] .+ (max(prob_α...))*max(prob_p...)/20 .+ 1e-7
-    mean_strategy = [values[i]*prob_p[i] for i=1:length(values)] .+ max(values...)/20 .+ 1e-7
+    cvar_strategy = [(prob_α[i]*values[i]*prob_p[i]) for i=1:length(values)] .+ (max(prob_α...))*max(values...)/20 .+ 1e-5
+    cdf_strategy = [(prob_α[i]*prob_p[i]) for i=1:length(values)] .+ (max(prob_α...))*max(prob_p...)/20 .+ 1e-5
+    # mean_strategy = [values[i]*prob_p[i] for i=1:length(values)] .+ max(values...)/20 .+ 1e-7
 
+    # @show prob_p, prob_α
     # Normalize to unity
     cvar_strategy /= sum(cvar_strategy)
     cdf_strategy /= sum(cdf_strategy)
-    mean_strategy /= sum(mean_strategy)
+    # mean_strategy /= sum(mean_strategy)
 
     # Mixture weighting
-    prob = β*mean_strategy .+ γ*cdf_strategy .+ (1 - β - γ)*cvar_strategy
-    # @show mean_strategy, cdf_strategy, cvar_strategy
+    prob = β*prob_p .+ γ*cdf_strategy .+ (1 - β - γ)*cvar_strategy
+
     return prob
 end
 
@@ -111,7 +118,7 @@ MCTS.estimate_value(f::Function, mdp::Union{POMDP,MDP}, state, w::Float64, depth
 """
 Construct an ISDPW tree and choose the best action. Also output some information.
 """
-function POMDPModelTools.action_info(p::ISDPWPlanner, s; tree_in_info=false, w=0.0, β=0.0, γ=1.0)
+function POMDPModelTools.action_info(p::ISDPWPlanner, s; tree_in_info=false, w=0.0, β=0.0, γ=1.0, schedule=0.1)
     println("Mixed-tail strategy w/ mean")
     local a::actiontype(p.mdp)
     info = Dict{Symbol, Any}()
@@ -148,7 +155,7 @@ function POMDPModelTools.action_info(p::ISDPWPlanner, s; tree_in_info=false, w=0
         start_us = MCTS.CPUtime_us()
         for i = 1:p.solver.n_iterations
             nquery += 1
-            simulate(p, snode, w, p.solver.depth, β, γ) # (not 100% sure we need to make a copy of the state here)
+            simulate(p, snode, w, p.solver.depth, β, γ, schedule) # (not 100% sure we need to make a copy of the state here)
             p.solver.show_progress ? next!(progress) : nothing
             if MCTS.CPUtime_us() - start_us >= p.solver.max_time * 1e6
                 p.solver.show_progress ? finish!(progress) : nothing
@@ -176,14 +183,14 @@ end
 """
 Return the reward for one iteration of ISDPW.
 """
-function simulate(dpw::ISDPWPlanner, snode::Int, w::Float64, d::Int, β, γ)
+function simulate(dpw::ISDPWPlanner, snode::Int, w::Float64, d::Int, β, γ, schedule)
     S = statetype(dpw.mdp)
     A = actiontype(dpw.mdp)
     sol = dpw.solver
     tree = dpw.tree
     s = tree.s_labels[snode]
-    s = TreeState(s, w)
-    dpw.reset_callback(dpw.mdp, s) # Optional: used to reset/reinitialize MDP to a given state.
+    # s = TreeState(s, w)
+    # dpw.reset_callback(dpw.mdp, s) # Optional: used to reset/reinitialize MDP to a given state.
 
     for i=tree.cdf_est.last_i+1:length(dpw.mdp.costs)
         ImportanceWeightedRiskMetrics.update!(tree.cdf_est, dpw.mdp.costs[i], exp(dpw.mdp.IS_weights[i]))
@@ -220,7 +227,8 @@ function simulate(dpw::ISDPWPlanner, snode::Int, w::Float64, d::Int, β, γ)
     end
 
     all_UCB = []
-    all_q = []
+    all_α = []
+    prob_α   = []
     ltn = log(tree.total_n[snode])
     for child in tree.children[snode]
         n = tree.n[child]
@@ -235,15 +243,20 @@ function simulate(dpw::ISDPWPlanner, snode::Int, w::Float64, d::Int, β, γ)
         @assert !isequal(UCB, -Inf)
 
         push!(all_UCB, UCB)
+
+        w_annealed = 1.0/(1.0+schedule*n)
+        α = w_annealed + (1-w_annealed)*sol.α
+        estimated_quantile = ImportanceWeightedRiskMetrics.quantile(tree.cdf_est, α)
+        c_cdf = ImportanceWeightedRiskMetrics.cdf(tree.conditional_cdf_est[child], estimated_quantile)
+        c_cdf = isnan(c_cdf) ? 1.0 : c_cdf
+        push!(prob_α, 1.0 - c_cdf)
+        push!(all_α, α)
     end
-    # print("Softmax weights: ", softmax(all_UCB))
-    w_annealed = 0.5/(1.0+0.2*exp(ltn))
-    α = w_annealed + (1-w_annealed)*sol.α
     # α = sol.α
 
 
-    estimated_quantile = ImportanceWeightedRiskMetrics.quantile(tree.cdf_est, α)
-    prob_α = [1. - ImportanceWeightedRiskMetrics.cdf(tree.conditional_cdf_est[child], estimated_quantile) for child in tree.children[snode]]
+
+    # prob_α = [1. - ImportanceWeightedRiskMetrics.cdf(tree.conditional_cdf_est[child], estimated_quantile) for child in tree.children[snode]]
     # while sum(prob_α) < α/100
     #     α = sqrt(α)
     #     estimated_quantile = ImportanceWeightedRiskMetrics.quantile(tree.cdf_est, α)
@@ -253,9 +266,10 @@ function simulate(dpw::ISDPWPlanner, snode::Int, w::Float64, d::Int, β, γ)
     prob_p = [pdf(actions(dpw.mdp, s), tree.a_labels[child]) for child in tree.children[snode]]
 
     # @show tree.cdf_est, tree.conditional_cdf_est
-    sanode, q_logprob = select_action(tree.children[snode], all_UCB, prob_α, prob_p, tree.cdf_est.last_i, α, β, γ)
+    sanode, q_logprob = select_action(tree.children[snode], all_UCB, prob_α, prob_p, tree.cdf_est.last_i, all_α, β, γ)
     a = tree.a_labels[sanode] # choose action randomly based on approximate value
     w_node = compute_IS_weight(q_logprob, a, actions(dpw.mdp, s))
+    # @show q_logprob, actions(dpw.mdp, s)
     w = w + w_node
 
     # transition
@@ -266,10 +280,13 @@ function simulate(dpw::ISDPWPlanner, snode::Int, w::Float64, d::Int, β, γ)
 
     if sol.check_repeat_state && tree.n_a_children[sanode] > 0
         spnode, r_stored = rand(dpw.rng, tree.transitions[sanode])
+        tree.s_labels[spnode] = sp
+        tree.s_lookup[sp] = spnode
     else
         spnode = MCTS.insert_state_node!(tree, sp, sol.keep_tree || sol.check_repeat_state)
         new_node = true
     end
+    # @show tree.s_labels[spnode].mdp_state === sp.mdp_state
 
     push!(tree.transitions[sanode], (spnode, r))
 
@@ -285,7 +302,7 @@ function simulate(dpw::ISDPWPlanner, snode::Int, w::Float64, d::Int, β, γ)
         # @show "Estimated", q_samp, w_samp
         q = r + discount(dpw.mdp)*q_samp
     else
-        q_samp, w_samp = simulate(dpw, spnode, w, d-1, β, γ)
+        q_samp, w_samp = simulate(dpw, spnode, w, d-1, β, γ, schedule)
         q = r + discount(dpw.mdp)*q_samp
     end
 
