@@ -12,7 +12,7 @@ using ImportanceWeightedRiskMetrics
 export ISDPWSolver, ISDPWPlanner, ISDPWTree
 include("tree_sampling_types.jl")
 
-export solve, softmax
+export solve, softmax, sample_trajectory
 include("tree_sampling.jl")
 
 export TreeState, construct_tree_rmdp, construct_tree_amdp, reward, rollout, TreeMDP

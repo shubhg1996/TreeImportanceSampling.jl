@@ -135,7 +135,7 @@ function ISDPWSolver(;depth::Int=10,
                     rng::AbstractRNG=Random.GLOBAL_RNG,
                     estimate_value::Any = RolloutEstimator(RandomSolver(rng)),
                     init_Q::Any = 0.0,
-                    init_N::Any = 1,
+                    init_N::Any = 0,
                     next_action::Any = UniformActionGenerator(rng),
                     default_action::Any = ExceptionRethrow(),
                     reset_callback::Function = (mdp, s)->false,
@@ -172,7 +172,7 @@ function MCTS.insert_state_node!(tree::ISDPWTree{S,A}, s::S, maintain_s_lookup=t
     MCTS.insert_state_node!(tree.dpw_tree, s, maintain_s_lookup)
 end
 function MCTS.insert_action_node!(tree::ISDPWTree{S,A}, snode::Int, a::A, n0::Int, q0::Float64, maintain_a_lookup=true) where {S,A}
-    push!(tree.conditional_cdf_est, RunningCDFEstimator([0.0], [1e-5]))
+    push!(tree.conditional_cdf_est, RunningCDFEstimator([1e7], [1e-7]))
     MCTS.insert_action_node!(tree.dpw_tree, snode, a, n0, q0, maintain_a_lookup)
 end
 

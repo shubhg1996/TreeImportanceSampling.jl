@@ -19,6 +19,7 @@ function mcts_isdpw(mdp; N=10, c=1.0, α=0.1)
                             enable_action_pw=false, # required.
                             show_progress=true,
                             tree_in_info=true,
+                            keep_tree=true,
                             α=α);
 
     planner = solve(solver, mdp);
