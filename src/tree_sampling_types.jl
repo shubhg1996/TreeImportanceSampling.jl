@@ -149,7 +149,7 @@ mutable struct ISDPWTree{S,A}
     dpw_tree::MCTS.DPWTree{S,A}
     cdf_est::RunningCDFEstimator
     conditional_cdf_est::Vector{RunningCDFEstimator}
-
+    
     function ISDPWTree{S,A}(sz::Int=1000) where {S,A}
         sz = min(sz, 100_000)
         dpw_tree = MCTS.DPWTree{S,A}(sz)
