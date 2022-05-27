@@ -196,7 +196,7 @@ function POMDPModelTools.action_info(p::ISDPWPlanner, s; tree_in_info=false, w=0
                 break
             end
         end
-        p.reset_callback(p.mdp, s) # Optional: leave the MDP in the current state.
+        # p.reset_callback(p.mdp, s) # Optional: leave the MDP in the current state.
         info[:search_time_us] = MCTS.CPUtime_us() - start_us
         info[:tree_queries] = nquery
         if p.solver.tree_in_info || tree_in_info
