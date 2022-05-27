@@ -10,6 +10,10 @@ end
 TreeState(mdp_state::Any) = TreeState([], [0.0], mdp_state, false, 0.0)
 TreeState(state::TreeState, w::Float64) = TreeState(state.values, state.costs, state.mdp_state, state.done, w)
 
+Base.hash(s::TreeState, h::UInt) = hash(map(f->getproperty(s, f), fieldnames(TreeState)), h)
+Base.isequal(s1::TreeState, s2::TreeState) = all(f->getproperty(s1, f) == getproperty(s2, f), fieldnames(TreeState))
+Base.:(==)(s1::TreeState, s2::TreeState) = isequal(s1, s2)
+
 # The simple mdp type
 mutable struct TreeMDP <: MDP{TreeState, Any}
     rmdp::Any
