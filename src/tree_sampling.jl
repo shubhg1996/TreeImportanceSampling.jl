@@ -151,7 +151,7 @@ MCTS.estimate_value(f::Function, mdp::Union{POMDP,MDP}, state, w::Float64, depth
 """
 Construct an ISDPW tree and choose the best action. Also output some information.
 """
-function POMDPModelTools.action_info(p::ISDPWPlanner, s; tree_in_info=false, w=0.0, kwargs...)
+function POMDPModelTools.action_info(p::ISDPWPlanner, s; tree_in_info=false, w=0.0, save_frequency=10, save_callback=nothing, kwargs...)
     @show "$(strategy_text) strategy"
     local a::actiontype(p.mdp)
     info = Dict{Symbol, Any}()
@@ -191,6 +191,9 @@ function POMDPModelTools.action_info(p::ISDPWPlanner, s; tree_in_info=false, w=0
             q_samp, w_samp = simulate(p, snode, w, p.solver.depth; kwargs...) # (not 100% sure we need to make a copy of the state here)
             ImportanceWeightedRiskMetrics.update!(p.tree.cdf_est, q_samp, exp(w_samp))
             p.solver.show_progress ? next!(progress) : nothing
+            if !isnothing(save_callback) && (i % save_frequency == 0)
+                save_callback(p)
+            end
             if MCTS.CPUtime_us() - start_us >= p.solver.max_time * 1e6
                 p.solver.show_progress ? finish!(progress) : nothing
                 break
