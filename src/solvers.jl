@@ -10,17 +10,17 @@ function mcts_dpw(mdp; N=10, c=1.0)
     return planner
 end
 
-function mcts_isdpw(mdp; N=10, c=1.0, α=0.1)
+function mcts_isdpw(mdp, params::TreeISParams; N=10)
     solver = ISDPWSolver(;  depth=100,
                             estimate_value=rollout, # required.
-                            exploration_constant=c,
+                            exploration_constant=params.c,
                             n_iterations=N,
                             enable_state_pw=false, # required.
                             enable_action_pw=false, # required.
                             show_progress=true,
                             tree_in_info=true,
                             keep_tree=true,
-                            α=α);
+                            α=params.α);
 
     planner = solve(solver, mdp);
     return planner

@@ -9,6 +9,9 @@ using StatsBase
 using Distributions
 using ImportanceWeightedRiskMetrics
 
+export TreeISParams
+include("structs.jl")
+
 export ISDPWSolver, ISDPWPlanner, ISDPWTree
 include("tree_sampling_types.jl")
 

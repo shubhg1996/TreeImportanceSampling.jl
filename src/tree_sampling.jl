@@ -41,13 +41,13 @@ function select_action(nodes, prob)
     return sanode, q_logprob
 end
 
-function compute_action_probs(nodes, values, prob_α, cost_α, prob_p; kwargs...)
+function compute_action_probs(nodes, values, prob_α, cost_α, prob_p; n=1, α=nothing, params=nothing, exploration_bonus=0.0)
 #     prob = adaptive_probs(values, prob_α, cost_α, prob_p; kwargs...)
 #     prob = naive_probs(values)
 #     prob = nominal_probs(prob_p)
     # prob = topk_probs(values, prob_p; k=2)
 #     prob = expec_probs(values, prob_p)
-    prob = cdf_probs(values, prob_α, prob_p; kwargs...)
+    prob = cdf_probs(values, prob_α, prob_p; n=n, uniform_floor=params.uniform_floor, exploration_bonus=exploration_bonus)
 #     prob = cvar_probs(cost_α, prob_p; kwargs...)
     return prob
 end
@@ -68,7 +68,7 @@ function expec_probs(values, prob_p)
     return prob
 end
 
-function cdf_probs(values, prob_α, prob_p; n=1, uniform_floor=0.01, exploration_bonus=0.0, kwargs...)
+function cdf_probs(values, prob_α, prob_p; n=1, uniform_floor=0.01, exploration_bonus=0.0)
     prob = [(prob_α[i]*prob_p[i]) for i=1:length(prob_α)] .+ 1e-7
     prob /= sum(prob)
     w_nominal = 0.0 + cooling_scheme_logarithmic(n; w0=1.0)
@@ -151,7 +151,7 @@ MCTS.estimate_value(f::Function, mdp::Union{POMDP,MDP}, state, w::Float64, depth
 """
 Construct an ISDPW tree and choose the best action. Also output some information.
 """
-function POMDPModelTools.action_info(p::ISDPWPlanner, s; tree_in_info=false, w=0.0, kwargs...)
+function POMDPModelTools.action_info(p::ISDPWPlanner, s; tree_in_info=false, w=0.0, params=TreeISParams())
     @show "$(strategy_text) strategy"
     local a::actiontype(p.mdp)
     info = Dict{Symbol, Any}()
@@ -188,7 +188,7 @@ function POMDPModelTools.action_info(p::ISDPWPlanner, s; tree_in_info=false, w=0
         start_us = MCTS.CPUtime_us()
         for i = 1:p.solver.n_iterations
             nquery += 1
-            q_samp, w_samp = simulate(p, snode, w, p.solver.depth; kwargs...) # (not 100% sure we need to make a copy of the state here)
+            q_samp, w_samp = simulate(p, snode, w, p.solver.depth, params) # (not 100% sure we need to make a copy of the state here)
             ImportanceWeightedRiskMetrics.update!(p.tree.cdf_est, q_samp, exp(w_samp))
             p.solver.show_progress ? next!(progress) : nothing
             if MCTS.CPUtime_us() - start_us >= p.solver.max_time * 1e6
@@ -261,13 +261,13 @@ function store_state!(dpw::ISDPWPlanner, tree, sol, sp, r, sanode)
     return spnode, new_node
 end
 
-function compute_q_w(dpw::ISDPWPlanner, sp, spnode, r, w, d, new_node; kwargs...)
+function compute_q_w(dpw::ISDPWPlanner, sp, spnode, r, w, d, new_node, params::TreeISParams)
     if new_node
         q_samp, w_samp = estimate_value(dpw.solved_estimate, dpw.mdp, sp, w, d-1)
         # @show "Estimated", q_samp, w_samp
         q = r + discount(dpw.mdp)*q_samp
     else
-        q_samp, w_samp = simulate(dpw, spnode, w, d-1; kwargs...)
+        q_samp, w_samp = simulate(dpw, spnode, w, d-1, params)
         q = r + discount(dpw.mdp)*q_samp
     end
     return q, w_samp
@@ -314,7 +314,7 @@ end
 """
 Return the reward for one iteration of ISDPW.
 """
-function simulate(dpw::ISDPWPlanner, snode::Int, w::Float64, d::Int; schedule=Inf, kwargs...)
+function simulate(dpw::ISDPWPlanner, snode::Int, w::Float64, d::Int, params::TreeISParams)
     S = statetype(dpw.mdp)
     A = actiontype(dpw.mdp)
     sol = dpw.solver
@@ -331,11 +331,11 @@ function simulate(dpw::ISDPWPlanner, snode::Int, w::Float64, d::Int; schedule=In
 
     store_actions!(dpw, tree, sol, s, snode)
 
-    all_UCB, all_α, cost_α, prob_α, exploration_bonus = compute_costs(dpw, tree, sol, snode; schedule=schedule)
+    all_UCB, all_α, cost_α, prob_α, exploration_bonus = compute_costs(dpw, tree, sol, snode; schedule=params.schedule)
 
     prob_p = get_nominal_prob(dpw, tree, snode, s)
 
-    q_prob = compute_action_probs(tree.children[snode], all_UCB, prob_α, cost_α, prob_p; n=tree.total_n[snode], α=all_α, exploration_bonus=exploration_bonus, kwargs...)
+    q_prob = compute_action_probs(tree.children[snode], all_UCB, prob_α, cost_α, prob_p; n=tree.total_n[snode], α=all_α, exploration_bonus=exploration_bonus, params=params)
     
     sanode, q_logprob = select_action(tree.children[snode], q_prob)
     a = tree.a_labels[sanode]
@@ -347,7 +347,7 @@ function simulate(dpw::ISDPWPlanner, snode::Int, w::Float64, d::Int; schedule=In
     
     spnode, new_node = store_state!(dpw::ISDPWPlanner, tree, sol, sp, r, sanode)
 
-    q, w_samp = compute_q_w(dpw, sp, spnode, r, w, d, new_node; kwargs...)
+    q, w_samp = compute_q_w(dpw, sp, spnode, r, w, d, new_node, params)
 
     tree.n[sanode] += 1
     tree.total_n[snode] += 1
@@ -371,7 +371,7 @@ end
 """
 Return action for a base MDP state
 """
-function tree_policy(dpw::ISDPWPlanner, mdp_state, lookup; schedule=Inf, kwargs...)
+function tree_policy(dpw::ISDPWPlanner, mdp_state, lookup; params=TreeISParams())
     sol = dpw.solver
     tree = dpw.tree
     s = TreeState([], [0.0], mdp_state, isterminal(dpw.mdp.rmdp, mdp_state), 0.0)
@@ -387,10 +387,10 @@ function tree_policy(dpw::ISDPWPlanner, mdp_state, lookup; schedule=Inf, kwargs.
     end
         
         
-    all_UCB, all_α, cost_α, prob_α, exploration_bonus = compute_costs(dpw, tree, sol, snode; schedule=schedule)
+    all_UCB, all_α, cost_α, prob_α, exploration_bonus = compute_costs(dpw, tree, sol, snode; schedule=params.schedule)
     
     prob_p = get_nominal_prob(dpw, tree, snode, s)
-    q_prob = compute_action_probs(tree.children[snode], all_UCB, prob_α, cost_α, prob_p; n=tree.total_n[snode], α=all_α, exploration_bonus=exploration_bonus, kwargs...)
+    q_prob = compute_action_probs(tree.children[snode], all_UCB, prob_α, cost_α, prob_p; n=tree.total_n[snode], α=all_α, exploration_bonus=exploration_bonus, params=params)
     
     sanode, q_logprob = select_action(tree.children[snode], q_prob)
     a = tree.a_labels[sanode]
