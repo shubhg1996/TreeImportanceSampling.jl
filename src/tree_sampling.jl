@@ -151,7 +151,7 @@ MCTS.estimate_value(f::Function, mdp::Union{POMDP,MDP}, state, w::Float64, depth
 """
 Construct an ISDPW tree and choose the best action. Also output some information.
 """
-function POMDPModelTools.action_info(p::ISDPWPlanner, s; tree_in_info=false, w=0.0, save_frequency=10, save_callback=nothing, kwargs...)
+function POMDPModelTools.action_info(p::ISDPWPlanner, s; tree_in_info=false, w=0.0, save_frequency=10, save_callback=nothing, params=TreeISParams(), kwargs...)
     @show "$(strategy_text) strategy"
     local a::actiontype(p.mdp)
     info = Dict{Symbol, Any}()
