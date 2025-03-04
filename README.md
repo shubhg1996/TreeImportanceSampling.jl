@@ -18,7 +18,7 @@ Generate importance weighted samples via stochastic Tree Search
 To install **TreeImportanceSampling.jl**, open the Julia REPL and run:
 
 ```using Pkg
-Pkg.add("TreeImportanceSampling")
+Pkg.add("https://github.com/shubhg1996/TreeImportanceSampling.jl.git")
 ```
 
 
